@@ -31,28 +31,6 @@ from stingray import Lightcurve, Powerspectrum, AveragedCrossspectrum
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # Example function to process one observation triplet
 def process_obs_triplet(obs, Pmin, Pmax, bin_length,
                         seg_length, fmin, fmax,spur_sub,
@@ -152,7 +130,7 @@ def process_obs_triplet(obs, Pmin, Pmax, bin_length,
         "scale factor": scale_factor,
         "dG": dG,
         "lc_1_sub_span": lc_1_sub_span,
-        "lc_1_sub_span_weights": [i.meanrate for i in lc_1_sub_span]
+        "lc_ref": lc2
 
     }
 #from each obs triplet we get the lc1subspan ie 20 lightcurves for each mod angle.
@@ -191,6 +169,46 @@ def cross_spec_model_null_cpf(phi,J):
     return (1/J) * C_nu_mag_sqrd
 
 
+def sum_stingray_lightcurves(lightcurves, dt=None):
+    """
+    Sum multiple Stingray Lightcurve objects.
+    
+    Parameters
+    ----------
+    lightcurves : list of Lightcurve
+        List of Stingray Lightcurve objects to sum.
+    dt : float, optional
+        Time resolution for resampling (if needed). If None, uses the smallest dt among all lightcurves.
+    
+    Returns
+    -------
+    summed_lc : Lightcurve
+        Summed Stingray Lightcurve object.
+    """
+    # Determine common dt
+    if dt is None:
+        dt = min(lc.dt for lc in lightcurves)
+    
+    # Determine common time range
+    t_start = min(lc.tstart for lc in lightcurves)
+    t_end = max(lc.tend for lc in lightcurves)
+    
+    # Create a common time array
+    common_time = np.arange(t_start, t_end, dt)
+    
+    # Interpolate each light curve onto the common time grid
+    interpolated_counts = []
+    for lc in lightcurves:
+        interp = np.interp(common_time, lc.time, lc.counts, left=0, right=0)
+        interpolated_counts.append(interp)
+    
+    # Sum the counts
+    summed_counts = np.sum(interpolated_counts, axis=0)
+    
+    # Create summed Stingray Lightcurve
+    summed_lc = Lightcurve(common_time, summed_counts, dt=dt)
+    
+    return summed_lc
 
 
 
@@ -241,7 +259,7 @@ def run_q_u_nu_stack(obs_folder, obs_names, Pmin, Pmax, bin_length,
     cs_G_obs_real = [[cs.power.real for cs in sublist] for sublist in cs_G_obs]
     cs_G_obs_imag = [[cs.power.imag for cs in sublist] for sublist in cs_G_obs]
     lc_1_sub_span = [r["lc_1_sub_span"] for r in results]  # Assuming all observations have the same lc_1_sub_span structure
-    lc_1_sub_span_weight = [r["lc_1_sub_span_weights"] for r in results]  # Weights for lc_1_sub_span
+    lc_ref_span=[r["lc_ref"] for r in results]
 
 
 
@@ -281,6 +299,41 @@ def run_q_u_nu_stack(obs_folder, obs_names, Pmin, Pmax, bin_length,
         summed_lc1.append(summed_lc)
 
 
+        # lc_list: a list of light curve objects, each with .time and .counts
+        target_len_lc2 = max(lc2.counts.shape[0] for lc2 in lc_ref_span)
+
+        # Interpolate all LCs onto the same target grid and sum
+        interp_lcs_2 = []
+
+        for lc in lc_ref_span:
+            # Original time grid normalized 0-1
+            x = np.linspace(0, 1, len(lc.counts))
+            # Target grid
+            x_target = np.linspace(0, 1, target_len_lc2)
+            
+            # Interpolate counts
+            interp_counts = np.interp(x_target, x, lc.counts)
+            interp_lcs_2.append(interp_counts)
+        # Sum interpolated counts across all LCs
+        summed_counts_2 = np.sum(interp_lcs_2, axis=0)
+
+        # Create a new LC object
+        # Use the time axis of the first LC rescaled to target length
+        summed_time_2 = np.linspace(lc_ref_span[0].time[0],
+                                lc_ref_span[0].time[-1],
+                                target_len_lc2)
+
+        # Assuming your LC class can be initialized like LC(time, counts)
+        summed_lc_2 = lc_ref_span[0].__class__(summed_time_2, summed_counts_2)
+        lc2_meanrate=summed_lc_2.meanrate
+
+
+
+
+    #summed_lc_2 = sum_stingray_lightcurves([lc_ref_span[obs_idx] for obs_idx in range(len(lc_ref_span))])
+    #lc2_meanrate=summed_lc_2.meanrate
+#Now to sum the reference band lightcurves
+
 
 
     #summing lc1 sub spans over observations for each mod angle
@@ -316,21 +369,6 @@ def run_q_u_nu_stack(obs_folder, obs_names, Pmin, Pmax, bin_length,
     numerator_obs_imag = np.sum(cs_G_obs_imag * weights_expanded_obs, axis=0)       
     denominator_obs_imag = np.sum(weights_expanded_obs, axis=0)   
 
-
-    #weights_expanded_lc1=np.array(lc_1_sub_span_weight)
-    #print('weights shape',np.shape(weights_expanded_lc1))
-    #print('lc1 shape',np.shape(lc_1_sub_span))
-    #numerator_lc1_sub_span=np.sum(lc_1_sub_span * weights_expanded_lc1,axis=0)
-    #denominator_lc1_sub_span=np.sum(weights_expanded_lc1,axis=0)
-
-    #weighted lc1 sub span
-    #weighted_lc1_sub_span=numerator_lc1_sub_span/np.where(denominator_lc1_sub_span==0,np.nan,denominator_lc1_sub_span)
-    #weighted_lc1_sub_span=np.average(weighted_lc1_sub_span,axis=0)
-
-
-    #weighted_lc1_sub_span=np.sum(lc_1_sub_span)
-    #weighted_lc1_sub_span=np.average(lc_1_sub_span,weights=lc_1_sub_span_weight,axis=0)
-
     # Final weighted average
     cs_G_real_stacked = numerator_obs_real / np.where(denominator_obs_real == 0, np.nan, denominator_obs_real)
     cs_G_imag_stacked = numerator_obs_imag / np.where(denominator_obs_imag == 0, np.nan, denominator_obs_imag)
@@ -347,27 +385,27 @@ def run_q_u_nu_stack(obs_folder, obs_names, Pmin, Pmax, bin_length,
 
 
     results_freq = Parallel(n_jobs=-1)(delayed(process_frequency_bin)(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stacked,cs_ref_imag_stacked,cs_G_obs[0][0].freq,av_mod,Q_norm,
-                            U_norm,dG_arr,summed_lc1) for i in (f_angle_list))
+                            U_norm,dG_arr,summed_lc1,lc2_meanrate) for i in (f_angle_list))
+    
     np.save(output_file, np.array(results_freq))
-
-
-
-
-
 
     return np.array(results_freq), av_mod, av_mod_err, av_f, av_f_err, Q_norm, U_norm, cs_G_real_stacked, cs_G_imag_stacked, cs_ref_real_stacked, cs_ref_imag_stacked, cs_ref_freqs
 
 
 
 # Now to calculate Q,U in each frequency bin
-def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stacked,cs_ref_imag_stacked,cs_freqs,av_mod,Q_norm,U_norm,dG,summed_lc1):
+def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stacked,cs_ref_imag_stacked,cs_freqs,av_mod,Q_norm,U_norm,dG,summed_lc1,lc_2_meanrate):
 
     #Averaging G_real and G_imag over the frequency bin
+
+ 
+
     G_real=[cs_G_real_stacked[(i[0]<=cs_freqs) & (cs_freqs<=i[1])].mean() for cs_G_real_stacked in cs_G_real_stacked]
     G_imag=[cs_G_imag_stacked[(i[0]<=cs_freqs) & (cs_freqs<=i[1])].mean() for cs_G_imag_stacked in cs_G_imag_stacked]
     #Averaging reference cs over the frequency bin
     cs_ref_real_mean=np.array(cs_ref_real_stacked[(i[0] <= cs_freqs) & (cs_freqs <= i[1])].mean())
     cs_ref_imag_mean=np.array(cs_ref_imag_stacked[(i[0] <= cs_freqs) & (cs_freqs <= i[1])].mean())
+
   
     cs_ref_average=cs_ref_real_mean+1j*cs_ref_imag_mean
     cs_ref_abs_mean_stack=np.abs(cs_ref_average)
@@ -386,6 +424,9 @@ def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stac
     
 
     #Ftting full model to real and imaginary parts of G
+    parameters_real,pcovreal=curve_fit(cross_spec_model_real_fixedJ,np.array(av_mod),np.array(G_real),sigma=dG)
+    parameters_imag,pcovimag=curve_fit(cross_spec_model_imag_fixedJ,np.array(av_mod),np.array(G_imag),sigma=dG)
+
     parameters_real,pcovreal=curve_fit(cross_spec_model_real_fixedJ,np.array(av_mod),np.array(G_real),sigma=dG)
     parameters_imag,pcovimag=curve_fit(cross_spec_model_imag_fixedJ,np.array(av_mod),np.array(G_imag),sigma=dG)
     print('parameters_real', parameters_real)
@@ -412,6 +453,8 @@ def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stac
     print('reduced chi sqr full model', (model_chi_real+model_chi_imag)/(dof_model_real+dof_model_imag) )
     #Unpacking full model parameters
     B_real, C_real = parameters_real
+    B_imag, C_imag = parameters_imag
+
     Breal_err,Creal_err= np.sqrt(np.diag(pcovreal))
     Bimag_err,Cimag_err= np.sqrt(np.diag(pcovimag))
       
@@ -446,18 +489,6 @@ def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stac
 
     print('F test: Full model vs  Null Hypothesis CPF',F_null_null)
 
-#    F_null_vs_null=ft.F_test(chi_cpf_real,chi_cpf_imag,G_null_cpf_real_dof,G_null_cpf_imag_dof,
-#                             chi_null_real,chi_null_imag,G_null_real_dof,G_null_imag_dof)
-    
-    plt.figure()
-    plt.plot(av_mod, G_real, 'o', label='G Real')
-    plt.plot(av_mod, G_imag, 'o', label='G Imag')
-    plt.plot(av_mod,G_null_real, 'o', label='Null Hypothesis Real')
-    plt.plot(av_mod,G_null_imag, 'o', label='Null Hypothesis Imag')
-    plt.plot(av_mod, [G_null_cpf_real]*len(av_mod), 'o', label='Null Hypothesis CPF Real')
-    plt.plot(av_mod, [G_null_cpf_imag]*len(av_mod), 'o', label='Null Hypothesis CPF Imag')
-    plt.legend()
-    plt.show()
 
 
     #Null hypothesis co-efficients (plotting purposes)
@@ -475,6 +506,7 @@ def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stac
     f_av = (i[0] + i[1]) / 2
     subject_cr=[i.meanrate for i in summed_lc1]
     overall_mean_cr=np.mean(subject_cr)
+
 
     popt, pcov = curve_fit(sinusoid, av_mod, subject_cr)
     A, B, C = popt
@@ -504,6 +536,27 @@ def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stac
     frac_rms_null_cpf=np.array( np.sqrt( np.array(G_null_cpf_real)**2 + np.array(G_null_cpf_imag)**2 )/ overall_mean_cr)
     phase_lag_null_cpf = np.arctan2(G_null_cpf_imag, G_null_cpf_real) /(2 * np.pi)  
 
+    #Phase of GQ and GU
+    phase_GQ=np.arctan2(B_imag,B_real)/(2*np.pi)
+    phase_GU=np.arctan2(C_imag,C_real)/(2*np.pi)
+
+    phase_GQ_err= np.sqrt( (B_real*Bimag_err)**2 + (B_imag*Breal_err)**2 )/((B_real**2 + B_imag**2)*2*np.pi)
+    phase_GU_err= np.sqrt( (C_real*Cimag_err)**2 + ( C_imag*Creal_err)**2 )/((C_real**2 + C_imag**2)*2*np.pi)
+
+    frac_rms_GQ= np.sqrt( B_real**2 + B_imag**2 )/ lc_2_meanrate*np.sqrt(cs_ref_real_mean)
+    frac_rms_GU= np.sqrt( C_real**2 + C_imag**2 )/ lc_2_meanrate*np.sqrt(cs_ref_real_mean)
+    
+    frac_rms_GQ_err= np.sqrt( (B_real*Breal_err)**2 + (B_imag*Bimag_err)**2 )/( np.sqrt( B_real**2 + B_imag**2 )* lc_2_meanrate* np.sqrt(cs_ref_real_mean) )
+    frac_rms_GU_err= np.sqrt( (C_real*Creal_err)**2 + (C_imag*Cimag_err)**2 )/( np.sqrt( C_real**2 + C_imag**2 )* lc_2_meanrate* np.sqrt(cs_ref_real_mean) )
+    
+    phase_GQ_null=np.arctan2(B_null_imag,B_null_real)/(2*np.pi)
+    phase_GU_null=np.arctan2(C_null_imag,C_null_real)/(2*np.pi)
+
+    frac_rms_GQ_null=np.sqrt( B_null_real**2 + B_null_imag**2 )/ lc_2_meanrate*np.sqrt(cs_ref_real_mean)
+    frac_rms_GU_null=np.sqrt( C_null_real**2 + C_null_imag**2 )/ lc_2_meanrate*np.sqrt(cs_ref_real_mean)
+
+    
+   
 
     #Packaging results into a dictionary
     result = {
@@ -548,10 +601,20 @@ def process_frequency_bin(i,cs_G_real_stacked,cs_G_imag_stacked,cs_ref_real_stac
     "frac_rms": frac_rms,
     "phase_lag": phase_lag,
     "d_frac_rms": d_frac_rms,
-    "d_phase_lag": d_phase_lag
-    
+    "d_phase_lag": d_phase_lag,
+    "phase_GQ": phase_GQ,   
+    "phase_GU": phase_GU,
+    "frac_rms_GQ": frac_rms_GQ,
+    "frac_rms_GU": frac_rms_GU,
+    "phase_GQ_null": phase_GQ_null,
+    "phase_GU_null": phase_GU_null,
+    "frac_rms_GQ_null": frac_rms_GQ_null,
+    "frac_rms_GU_null": frac_rms_GU_null,
+    "phase_GQ_err": phase_GQ_err,
+    "phase_GU_err": phase_GU_err,
+    "frac_rms_GQ_err": frac_rms_GQ_err,
+    "frac_rms_GU_err": frac_rms_GU_err
 
-    
 
     }   
 

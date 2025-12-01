@@ -215,6 +215,7 @@ def qfans(obs_folder,obs_name, Pmin, Pmax, bin_length, seg_length, fmin, fmax, s
     frac_rms= np.sqrt( G_real_span**2 + G_im_span**2 )/ (subject_cr)
     phase_lag = np.arctan2(G_im_span, G_real_span) /(2 * np.pi)
     mag = np.sqrt(G_real_span**2 + G_im_span**2)
+    
     d_phase_lag = np.array(dG_span) / (mag * (2 * np.pi))
     d_frac_rms = np.array(dG_span) / np.array(subject_cr)
 
